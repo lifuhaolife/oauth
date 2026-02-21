@@ -70,7 +70,8 @@ func (s *JWTService) GenerateToken(user *model.User) (accessToken, refreshToken 
 		Username: user.Username,
 	}
 
-	accessToken, err = jwt.SignWithClaims(accessClaims, jwt.SigningMethodRS256, privateKey)
+	accessTokenObj := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
+	accessToken, err = accessTokenObj.SignedString(privateKey)
 	if err != nil {
 		return "", "", err
 	}
@@ -90,7 +91,8 @@ func (s *JWTService) GenerateToken(user *model.User) (accessToken, refreshToken 
 		Username: user.Username,
 	}
 
-	refreshToken, err = jwt.SignWithClaims(refreshClaims, jwt.SigningMethodRS256, privateKey)
+	refreshTokenObj := jwt.NewWithClaims(jwt.SigningMethodRS256, refreshClaims)
+	refreshToken, err = refreshTokenObj.SignedString(privateKey)
 	if err != nil {
 		return "", "", err
 	}

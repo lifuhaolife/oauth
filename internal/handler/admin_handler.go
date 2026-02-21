@@ -36,11 +36,15 @@ func ListUsers(c *gin.Context) {
 		users[i].Phone = users[i].GetMaskedPhone(keyStore.GetAESKey())
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"users":     users,
-		"total":     total,
-		"page":      page,
-		"page_size": pageSize,
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "获取成功",
+		Data: gin.H{
+			"users":     users,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		},
 	})
 }
 
@@ -52,36 +56,43 @@ func UpdateUserStatus(c *gin.Context) {
 		Status int `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求参数错误",
+			Error:   err.Error(),
 		})
 		return
 	}
 
 	if req.Status != 0 && req.Status != 1 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "状态值必须为 0 或 1",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "状态值必须为 0 或 1",
 		})
 		return
 	}
 
 	result := model.GetDB().Model(&model.User{}).Where("id = ?", userID).Update("status", req.Status)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "更新失败",
+		c.JSON(http.StatusInternalServerError, model.ErrorResponse{
+			Code:    500,
+			Message: "更新失败",
+			Error:   result.Error.Error(),
 		})
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "用户不存在",
+		c.JSON(http.StatusNotFound, model.ErrorResponse{
+			Code:    404,
+			Message: "用户不存在",
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "更新成功",
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "更新成功",
 	})
 }
 
@@ -116,11 +127,15 @@ func GetLoginLogs(c *gin.Context) {
 	query.Count(&total)
 	query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&logs)
 
-	c.JSON(http.StatusOK, gin.H{
-		"logs":      logs,
-		"total":     total,
-		"page":      page,
-		"page_size": pageSize,
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "获取成功",
+		Data: gin.H{
+			"logs":      logs,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		},
 	})
 }
 
@@ -129,5 +144,9 @@ func GetKeyStats(c *gin.Context) {
 	keyStore := keystore.GetKeyStore()
 	stats := keyStore.GetKeyStats()
 
-	c.JSON(http.StatusOK, stats)
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "获取成功",
+		Data:    stats,
+	})
 }

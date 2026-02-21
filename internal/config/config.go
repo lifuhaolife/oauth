@@ -150,7 +150,10 @@ func ensureJWTKeyPair(cfg *Config) error {
 	}
 
 	// 保存私钥
-	privateKeyBytes := x509.MarshalPKCS8PrivateKey(privateKey)
+	privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("编码私钥失败：%v", err)
+	}
 	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
 		Bytes: privateKeyBytes,

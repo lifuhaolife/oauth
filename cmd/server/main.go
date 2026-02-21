@@ -8,7 +8,6 @@ import (
 	"auth-service/internal/service"
 	"auth-service/internal/keystore"
 	"log"
-	"os"
 
 	"github.com/gin-gonic/gin"
 )

@@ -3,7 +3,6 @@ package keystore
 import (
 	"auth-service/internal/config"
 	"auth-service/internal/crypto"
-	"auth-service/internal/model"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -14,8 +13,6 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"golang.org/x/crypto/sha3"
 )
 
 // RSAPubKeyEntry RSA 公钥条目 (存储在缓存中)

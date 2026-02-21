@@ -73,10 +73,9 @@ func ParseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	return rsaPrivKey, nil
 }
 
-// RSAEncrypt RSA 加密 (OAEP with SHA-256)
+// RSAEncrypt RSA 加密 (PKCS#1 v1.5 for web compatibility)
 func RSAEncrypt(pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
-	hash := sha256.New()
-	ciphertext, err := rsa.EncryptOAEP(hash, rand.Reader, pubKey, plaintext, nil)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pubKey, plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("RSA 加密失败：%v", err)
 	}
@@ -85,8 +84,7 @@ func RSAEncrypt(pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 
 // RSADecrypt RSA 解密
 func RSADecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-	hash := sha256.New()
-	plaintext, err := rsa.DecryptOAEP(hash, rand.Reader, privKey, ciphertext, nil)
+	plaintext, err := rsa.DecryptPKCS1v15(rand.Reader, privKey, ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("RSA 解密失败：%v", err)
 	}

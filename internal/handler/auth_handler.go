@@ -5,12 +5,10 @@ import (
 	"auth-service/internal/keystore"
 	"auth-service/internal/model"
 	"auth-service/internal/service"
-	"auth-service/internal/jwt"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,15 +17,17 @@ import (
 // GetRSAPublicKey 获取 RSA 公钥
 // @Summary 获取 RSA 公钥
 // @Tags 认证
-// @Success 200 {object} model.RSAPublicKeyResponse
+// @Success 200 {object} model.Response
 // @Router /api/v1/auth/pubkey [get]
 func GetRSAPublicKey(c *gin.Context) {
 	keyStore := keystore.GetKeyStore()
 
 	keyID, publicKeyBase64, err := keyStore.GetRSAPublicKey()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取公钥失败",
+		c.JSON(http.StatusInternalServerError, model.ErrorResponse{
+			Code:    500,
+			Message: "获取公钥失败",
+			Error:   err.Error(),
 		})
 		return
 	}
@@ -35,9 +35,13 @@ func GetRSAPublicKey(c *gin.Context) {
 	// 记录公钥使用 (异步)
 	go recordPubKeyUsage(keyID)
 
-	c.JSON(http.StatusOK, model.RSAPublicKeyResponse{
-		KeyID:     keyID,
-		PublicKey: publicKeyBase64,
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "获取公钥成功",
+		Data: gin.H{
+			"key_id":     keyID,
+			"public_key": publicKeyBase64,
+		},
 	})
 }
 
@@ -64,25 +68,33 @@ func recordPubKeyUsage(keyID string) {
 func Login(c *gin.Context) {
 	var req model.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
+		// 打印详细错误信息用于调试
+		fmt.Printf("登录请求参数错误: %v\n", err)
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求参数错误",
+			Error:   err.Error(),
 		})
 		return
 	}
 
+	fmt.Printf("登录请求: KeyID=%s, Timestamp=%d, Nonce=%s\n", req.KeyID, req.Timestamp, req.Nonce)
+
 	// 验证时间戳 (防重放攻击)
 	now := time.Now().Unix()
 	if now-req.Timestamp > 300 { // 5 分钟
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求已过期",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求已过期",
 		})
 		return
 	}
 
 	// 验证签名
 	if err := verifySignature(req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "签名验证失败",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "签名验证失败",
 		})
 		return
 	}
@@ -91,8 +103,9 @@ func Login(c *gin.Context) {
 	keyStore := keystore.GetKeyStore()
 	privateKey, err := keyStore.GetRSAPrivateKey(req.KeyID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "密钥无效或已使用",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "密钥无效或已使用",
 		})
 		return
 	}
@@ -100,8 +113,9 @@ func Login(c *gin.Context) {
 	// Base64 解码加密数据
 	encryptedData, err := base64.StdEncoding.DecodeString(req.Encrypted)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "无效的加密数据",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "无效的加密数据",
 		})
 		return
 	}
@@ -109,8 +123,9 @@ func Login(c *gin.Context) {
 	// RSA 解密
 	decryptedData, err := crypto.RSADecrypt(privateKey, encryptedData)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "解密失败",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "解密失败",
 		})
 		return
 	}
@@ -124,8 +139,9 @@ func Login(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := json.Unmarshal(decryptedData, &credentials); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "无效的数据格式",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "无效的数据格式",
 		})
 		return
 	}
@@ -137,8 +153,9 @@ func Login(c *gin.Context) {
 		// 记录登录失败日志
 		go logLoginAttempt(0, "PASSWORD", "", "", 0, err.Error())
 
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": err.Error(),
+		c.JSON(http.StatusUnauthorized, model.ErrorResponse{
+			Code:    401,
+			Message: err.Error(),
 		})
 		return
 	}
@@ -149,19 +166,23 @@ func Login(c *gin.Context) {
 	// 解密手机号返回
 	user.DecryptPhone(keyStore.GetAESKey())
 
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  resp.AccessToken,
-		"refresh_token": resp.RefreshToken,
-		"token_type":    resp.TokenType,
-		"expires_in":    resp.ExpiresIn,
-		"user": gin.H{
-			"id":         user.ID,
-			"username":   user.Username,
-			"nickname":   user.Nickname,
-			"avatar":     user.Avatar,
-			"phone":      user.Phone,
-			"role":       user.Role,
-			"created_at": user.CreatedAt,
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "登录成功",
+		Data: gin.H{
+			"access_token":  resp.AccessToken,
+			"refresh_token": resp.RefreshToken,
+			"token_type":    resp.TokenType,
+			"expires_in":    resp.ExpiresIn,
+			"user": gin.H{
+				"id":         user.ID,
+				"username":   user.Username,
+				"nickname":   user.Nickname,
+				"avatar":     user.Avatar,
+				"phone":      user.Phone,
+				"role":       user.Role,
+				"created_at": user.CreatedAt,
+			},
 		},
 	})
 }
@@ -170,8 +191,10 @@ func Login(c *gin.Context) {
 func RefreshToken(c *gin.Context) {
 	var req model.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求参数错误",
+			Error:   err.Error(),
 		})
 		return
 	}
@@ -179,35 +202,50 @@ func RefreshToken(c *gin.Context) {
 	authService := service.GetAuthService()
 	resp, err := authService.RefreshToken(req.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": err.Error(),
+		c.JSON(http.StatusUnauthorized, model.ErrorResponse{
+			Code:    401,
+			Message: err.Error(),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "刷新成功",
+		Data: gin.H{
+			"access_token":  resp.AccessToken,
+			"refresh_token": resp.RefreshToken,
+			"token_type":    resp.TokenType,
+			"expires_in":    resp.ExpiresIn,
+		},
+	})
 }
 
 // Logout 用户登出
 func Logout(c *gin.Context) {
 	var req model.LogoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求参数错误",
+			Error:   err.Error(),
 		})
 		return
 	}
 
 	authService := service.GetAuthService()
 	if err := authService.Logout(req.AccessToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "登出失败",
+		c.JSON(http.StatusInternalServerError, model.ErrorResponse{
+			Code:    500,
+			Message: "登出失败",
+			Error:   err.Error(),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "登出成功",
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "登出成功",
 	})
 }
 
@@ -215,15 +253,16 @@ func Logout(c *gin.Context) {
 func GetCurrentUser(c *gin.Context) {
 	// 从上下文获取用户信息 (由 AuthMiddleware 注入)
 	userID, _ := c.Get("user_id")
-	username, _ := c.Get("username")
 
 	keyStore := keystore.GetKeyStore()
 	authService := service.GetAuthService()
 
 	user, err := authService.GetUserByID(userID.(int64))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "用户不存在",
+		c.JSON(http.StatusNotFound, model.ErrorResponse{
+			Code:    404,
+			Message: "用户不存在",
+			Error:   err.Error(),
 		})
 		return
 	}
@@ -231,15 +270,19 @@ func GetCurrentUser(c *gin.Context) {
 	// 解密手机号
 	user.DecryptPhone(keyStore.GetAESKey())
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":         user.ID,
-		"username":   user.Username,
-		"nickname":   user.Nickname,
-		"avatar":     user.Avatar,
-		"phone":      user.GetMaskedPhone(keyStore.GetAESKey()),
-		"role":       user.Role,
-		"created_at": user.CreatedAt,
-		"last_login": user.LastLoginAt,
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "获取成功",
+		Data: gin.H{
+			"id":         user.ID,
+			"username":   user.Username,
+			"nickname":   user.Nickname,
+			"avatar":     user.Avatar,
+			"phone":      user.GetMaskedPhone(keyStore.GetAESKey()),
+			"role":       user.Role,
+			"created_at": user.CreatedAt,
+			"last_login": user.LastLoginAt,
+		},
 	})
 }
 
@@ -252,22 +295,26 @@ func ChangePassword(c *gin.Context) {
 		NewPassword string `json:"new_password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: "请求参数错误",
+			Error:   err.Error(),
 		})
 		return
 	}
 
 	authService := service.GetAuthService()
 	if err := authService.ChangePassword(userID.(int64), req.OldPassword, req.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+		c.JSON(http.StatusBadRequest, model.ErrorResponse{
+			Code:    400,
+			Message: err.Error(),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "密码修改成功",
+	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
+		Message: "密码修改成功",
 	})
 }
 
@@ -284,7 +331,6 @@ func GetWechatAuthURL(c *gin.Context) {
 // WechatCallback 微信登录回调
 func WechatCallback(c *gin.Context) {
 	code := c.Query("code")
-	state := c.Query("state")
 
 	if code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -294,7 +340,7 @@ func WechatCallback(c *gin.Context) {
 	}
 
 	authService := service.GetAuthService()
-	user, _, err := authService.WechatLogin(code)
+	_, _, err := authService.WechatLogin(code)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -312,7 +358,7 @@ func GetJWKS(c *gin.Context) {
 	publicKey := keyStore.GetJWTPublicKey()
 
 	// 生成 JWK
-	jwk := jwt.JWK{
+	jwk := model.JWK{
 		Kty: "RSA",
 		Kid: "jwt-key-1",
 		Use: "sig",
@@ -322,7 +368,7 @@ func GetJWKS(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.JWKSResponse{
-		Keys: []jwt.JWK{jwk},
+		Keys: []model.JWK{jwk},
 	})
 }
 

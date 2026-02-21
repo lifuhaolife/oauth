@@ -1,23 +1,16 @@
-// Package main provides the entry point for running all tests in the project
-package main
+// Package tests provides integration tests for the auth service
+package tests
 
 import (
-	"fmt"
-	"os"
 	"testing"
 )
 
-func main() {
-	// This is a placeholder for running all tests
-	fmt.Println("Running all tests...")
+// TestMain is the entry point for running all tests in this package
+func TestMain(m *testing.M) {
+	// Setup code can go here if needed
 
-	// Call the testing framework
-	testing.Main(
-		func(pat, str string) (bool, error) { return true, nil },
-		nil, // []InternalTest
-		nil, // []InternalBenchmark
-		nil, // []InternalExample
-	)
+	// Run tests
+	m.Run()
 
-	os.Exit(0)
+	// Teardown code can go here if needed
 }

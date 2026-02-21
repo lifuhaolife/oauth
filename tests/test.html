@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth 认证服务测试</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { text-align: center; color: #333; margin-bottom: 20px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h2 { color: #4a90d9; margin-bottom: 15px; border-bottom: 2px solid #4a90d9; padding-bottom: 10px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 500; color: #555; }
+        .form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .form-group textarea { height: 100px; font-family: monospace; }
+        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px; margin-bottom: 10px; }
+        .btn-primary { background: #4a90d9; color: white; }
+        .btn-primary:hover { background: #357abd; }
+        .btn-success { background: #5cb85c; color: white; }
+        .btn-success:hover { background: #4cae4c; }
+        .btn-warning { background: #f0ad4e; color: white; }
+        .btn-warning:hover { background: #ec971f; }
+        .btn-danger { background: #d9534f; color: white; }
+        .btn-danger:hover { background: #c9302c; }
+        .response { background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-top: 15px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+        .status { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; margin-left: 10px; }
+        .status-ok { background: #d4edda; color: #155724; }
+        .status-error { background: #f8d7da; color: #721c24; }
+        .token-info { background: #e7f3ff; padding: 10px; border-radius: 4px; margin-top: 10px; }
+        .token-info p { margin: 5px 0; font-size: 13px; }
+        .tabs { display: flex; border-bottom: 1px solid #ddd; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom-color: #4a90d9; color: #4a90d9; font-weight: 500; }
+        .tab:hover { background: #f5f5f5; }
+        .hidden { display: none; }
+        .api-url { font-family: monospace; background: #f0f0f0; padding: 5px 10px; border-radius: 3px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OAuth 认证服务测试</h1>
+
+        <!-- 状态栏 -->
+        <div class="card">
+            <h2>服务状态</h2>
+            <p>API 地址: <span class="api-url" id="apiBase">http://localhost:8082</span></p>
+            <button class="btn btn-primary" onclick="checkHealth()">检查健康状态</button>
+            <span id="healthStatus"></span>
+            <div id="healthResponse" class="response hidden"></div>
+        </div>
+
+        <!-- 标签页 -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('login')">登录测试</div>
+            <div class="tab" onclick="switchTab('user')">用户操作</div>
+            <div class="tab" onclick="switchTab('admin')">管理功能</div>
+            <div class="tab" onclick="switchTab('raw')">原始API</div>
+        </div>
+
+        <!-- 登录测试 -->
+        <div id="login-tab" class="card">
+            <h2>用户登录</h2>
+
+            <div class="form-group">
+                <label>步骤1: 获取RSA公钥</label>
+                <button class="btn btn-primary" onclick="getPublicKey()">获取公钥</button>
+                <div id="pubkeyResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>步骤2: 用户登录</label>
+                <input type="text" id="username" placeholder="用户名" value="admin">
+                <input type="password" id="password" placeholder="密码" value="Admin@123" style="margin-top: 10px;">
+                <button class="btn btn-success" onclick="login()" style="margin-top: 10px;">登录</button>
+            </div>
+
+            <div id="loginResponse" class="response hidden"></div>
+
+            <div id="tokenInfo" class="token-info hidden">
+                <p><strong>Access Token:</strong> <span id="accessTokenPreview"></span></p>
+                <p><strong>Refresh Token:</strong> <span id="refreshTokenPreview"></span></p>
+            </div>
+        </div>
+
+        <!-- 用户操作 -->
+        <div id="user-tab" class="card hidden">
+            <h2>用户操作</h2>
+
+            <div class="form-group">
+                <label>获取当前用户信息</label>
+                <button class="btn btn-primary" onclick="getCurrentUser()">获取用户信息</button>
+                <div id="userResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>刷新Token</label>
+                <button class="btn btn-warning" onclick="refreshToken()">刷新Token</button>
+                <div id="refreshResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>修改密码</label>
+                <input type="password" id="oldPassword" placeholder="旧密码">
+                <input type="password" id="newPassword" placeholder="新密码" style="margin-top: 10px;">
+                <button class="btn btn-danger" onclick="changePassword()" style="margin-top: 10px;">修改密码</button>
+                <div id="passwordResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>登出</label>
+                <button class="btn btn-danger" onclick="logout()">登出</button>
+                <div id="logoutResponse" class="response hidden"></div>
+            </div>
+        </div>
+
+        <!-- 管理功能 -->
+        <div id="admin-tab" class="card hidden">
+            <h2>管理功能 (需要管理员权限)</h2>
+
+            <div class="form-group">
+                <label>获取用户列表</label>
+                <button class="btn btn-primary" onclick="listUsers()">获取用户列表</button>
+                <div id="usersResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>获取密钥统计</label>
+                <button class="btn btn-primary" onclick="getKeyStats()">密钥统计</button>
+                <div id="keyStatsResponse" class="response hidden"></div>
+            </div>
+
+            <div class="form-group">
+                <label>获取登录日志</label>
+                <button class="btn btn-primary" onclick="getLoginLogs()">登录日志</button>
+                <div id="logsResponse" class="response hidden"></div>
+            </div>
+        </div>
+
+        <!-- 原始API测试 -->
+        <div id="raw-tab" class="card hidden">
+            <h2>原始API测试</h2>
+
+            <div class="form-group">
+                <label>请求方法</label>
+                <select id="method">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>请求路径 (不含基础URL)</label>
+                <input type="text" id="path" placeholder="/api/v1/auth/pubkey" value="/api/v1/auth/pubkey">
+            </div>
+
+            <div class="form-group">
+                <label>请求体 (JSON)</label>
+                <textarea id="body" placeholder='{"key": "value"}'></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="useAuth"> 添加Authorization头
+                </label>
+            </div>
+
+            <button class="btn btn-primary" onclick="sendRawRequest()">发送请求</button>
+            <div id="rawResponse" class="response hidden"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
+    <script>
+        const API_BASE = 'http://localhost:8082';
+        let accessToken = localStorage.getItem('accessToken') || '';
+        let refreshTokenValue = localStorage.getItem('refreshToken') || '';
+        let currentPublicKey = null;
+        let currentKeyId = null;
+
+        // 更新token显示
+        function updateTokenDisplay() {
+            if (accessToken) {
+                document.getElementById('tokenInfo').classList.remove('hidden');
+                document.getElementById('accessTokenPreview').textContent = accessToken.substring(0, 50) + '...';
+                document.getElementById('refreshTokenPreview').textContent = refreshTokenValue.substring(0, 50) + '...';
+            } else {
+                document.getElementById('tokenInfo').classList.add('hidden');
+            }
+        }
+
+        // 初始化显示
+        updateTokenDisplay();
+
+        // 切换标签页
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.card').forEach(c => {
+                if (c.id && c.id.endsWith('-tab')) c.classList.add('hidden');
+            });
+            event.target.classList.add('active');
+            document.getElementById(tab + '-tab').classList.remove('hidden');
+        }
+
+        // 显示响应
+        function showResponse(elementId, data, isError = false) {
+            const el = document.getElementById(elementId);
+            el.classList.remove('hidden');
+            el.textContent = typeof data === 'object' ? JSON.stringify(data, null, 2) : data;
+            el.style.borderLeft = isError ? '4px solid #d9534f' : '4px solid #5cb85c';
+        }
+
+        // 检查健康状态
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                document.getElementById('healthStatus').innerHTML = '<span class="status status-ok">在线</span>';
+                showResponse('healthResponse', data);
+            } catch (error) {
+                document.getElementById('healthStatus').innerHTML = '<span class="status status-error">离线</span>';
+                showResponse('healthResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 获取RSA公钥
+        async function getPublicKey() {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/pubkey`);
+                const data = await response.json();
+                
+                // 适配统一响应格式
+                if (data.code !== 200) {
+                    throw new Error(data.message || '获取公钥失败');
+                }
+                
+                const pubkeyData = data.data;
+                currentKeyId = pubkeyData.key_id;
+                
+                // Base64解码 (先清理可能的空格和换行符)
+                const cleanBase64 = pubkeyData.public_key.replace(/\s/g, '');
+                currentPublicKey = atob(cleanBase64);
+                
+                showResponse('pubkeyResponse', {
+                    key_id: pubkeyData.key_id,
+                    public_key: currentPublicKey.substring(0, 100) + '...'
+                });
+                console.log('公钥已获取:', currentKeyId);
+                console.log('公钥内容:', currentPublicKey);
+            } catch (error) {
+                console.error('获取公钥失败:', error);
+                showResponse('pubkeyResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 登录
+        async function login() {
+            if (!currentPublicKey || !currentKeyId) {
+                alert('请先获取公钥');
+                return;
+            }
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            // RSA加密
+            const encrypt = new JSEncrypt();
+            encrypt.setPublicKey(currentPublicKey);
+
+            const credentials = JSON.stringify({ username, password });
+            const encrypted = encrypt.encrypt(credentials);
+
+            // 生成随机 nonce
+            const nonce = Math.random().toString(36).substring(2, 15);
+
+            const requestData = {
+                key_id: currentKeyId,
+                encrypted_data: encrypted,  // 直接使用加密后的字符串，不需要再次 Base64 编码
+                timestamp: Math.floor(Date.now() / 1000),
+                signature: '',  // TODO: 实现 HMAC 签名
+                nonce: nonce
+            };
+
+            console.log('发送的请求数据:', requestData);
+            console.log('加密数据类型:', typeof encrypted, '长度:', encrypted ? encrypted.length : 0);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                });
+                const data = await response.json();
+                console.log('服务器响应:', data);
+
+                if (response.ok && data.code === 200) {
+                    // 统一响应格式：data.data 包含实际数据
+                    const loginData = data.data;
+                    accessToken = loginData.access_token;
+                    refreshTokenValue = loginData.refresh_token;
+                    localStorage.setItem('accessToken', accessToken);
+                    localStorage.setItem('refreshToken', refreshTokenValue);
+                    updateTokenDisplay();
+                    // 显示完整的响应数据
+                    showResponse('loginResponse', data);
+                } else {
+                    console.error('登录失败:', data);
+                    showResponse('loginResponse', data, true);
+                }
+            } catch (error) {
+                console.error('请求错误:', error);
+                showResponse('loginResponse', '错误: ' + error.message, true);
+            }
+
+            // 调试信息
+            console.log('发送的请求数据:', requestData);
+        }
+
+        // 获取当前用户
+        async function getCurrentUser() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/user/me`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                const data = await response.json();
+                showResponse('userResponse', data, data.code !== 200);
+            } catch (error) {
+                showResponse('userResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 刷新Token
+        async function refreshToken() {
+            if (!refreshTokenValue) {
+                alert('没有refresh token');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshTokenValue })
+                });
+                const data = await response.json();
+                if (data.code === 200) {
+                    const tokenData = data.data;
+                    accessToken = tokenData.access_token;
+                    refreshTokenValue = tokenData.refresh_token;
+                    localStorage.setItem('accessToken', accessToken);
+                    localStorage.setItem('refreshToken', refreshTokenValue);
+                    updateTokenDisplay();
+                }
+                showResponse('refreshResponse', data, data.code !== 200);
+            } catch (error) {
+                showResponse('refreshResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 修改密码
+        async function changePassword() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/user/password`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        old_password: oldPassword,
+                        new_password: newPassword
+                    })
+                });
+                const data = await response.json();
+                showResponse('passwordResponse', data, data.code !== 200);
+            } catch (error) {
+                showResponse('passwordResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 登出
+        async function logout() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/auth/logout`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ access_token: accessToken })
+                });
+                const data = await response.json();
+                if (data.code === 200) {
+                    accessToken = '';
+                    refreshTokenValue = '';
+                    localStorage.removeItem('accessToken');
+                    localStorage.removeItem('refreshToken');
+                    updateTokenDisplay();
+                }
+                showResponse('logoutResponse', data, data.code !== 200);
+            } catch (error) {
+                showResponse('logoutResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 获取用户列表
+        async function listUsers() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/users`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                const data = await response.json();
+                showResponse('usersResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('usersResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 获取密钥统计
+        async function getKeyStats() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/keys/stats`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                const data = await response.json();
+                showResponse('keyStatsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('keyStatsResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 获取登录日志
+        async function getLoginLogs() {
+            if (!accessToken) {
+                alert('请先登录');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/login-logs`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                const data = await response.json();
+                showResponse('logsResponse', data, !response.ok);
+            } catch (error) {
+                showResponse('logsResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 发送原始请求
+        async function sendRawRequest() {
+            const method = document.getElementById('method').value;
+            const path = document.getElementById('path').value;
+            const body = document.getElementById('body').value;
+            const useAuth = document.getElementById('useAuth').checked;
+
+            const options = {
+                method: method,
+                headers: {}
+            };
+
+            if (useAuth && accessToken) {
+                options.headers['Authorization'] = `Bearer ${accessToken}`;
+            }
+
+            if (body && (method === 'POST' || method === 'PUT')) {
+                options.headers['Content-Type'] = 'application/json';
+                options.body = body;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}${path}`, options);
+                const contentType = response.headers.get('content-type');
+                let data;
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    data = await response.text();
+                }
+                showResponse('rawResponse', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: data
+                }, !response.ok);
+            } catch (error) {
+                showResponse('rawResponse', '错误: ' + error.message, true);
+            }
+        }
+    </script>
+</body>
+</html>

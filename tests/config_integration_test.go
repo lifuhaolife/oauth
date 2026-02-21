@@ -12,7 +12,7 @@ func TestConfigLoading(t *testing.T) {
 	originalMasterKey := os.Getenv("MASTER_KEY")
 
 	// 设置测试环境变量
-	os.Setenv("MASTER_KEY", "dGVzdF9tYXN0ZXJfa2V5X2Zvcl90ZXN0aW5nXzEyMw==") // Base64 encoded test key
+	os.Setenv("MASTER_KEY", "dGVzdF9tYXN0ZXJfa2V5X2Zvcl90ZXN0aW5nXzEyMzQ=") // Base64 encoded test key (32 bytes)
 	defer func() {
 		// 恢复原始环境变量
 		if originalMasterKey != "" {

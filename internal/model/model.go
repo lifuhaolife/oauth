@@ -3,7 +3,6 @@ package model
 import (
 	"auth-service/internal/config"
 	"auth-service/internal/crypto"
-	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -162,11 +161,25 @@ func (KeyStoreRecord) TableName() string {
 
 // ============ 数据传输结构 ============
 
+// Response 统一响应结构
+type Response struct {
+	Code    int         `json:"code"`              // 业务状态码：200-成功，其他-失败
+	Message string      `json:"message,omitempty"` // 提示信息
+	Data    interface{} `json:"data,omitempty"`    // 响应数据
+}
+
+// ErrorResponse 错误响应
+type ErrorResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Error   string `json:"error,omitempty"` // 详细错误信息（开发环境）
+}
+
 // LoginRequest 登录请求
 type LoginRequest struct {
 	KeyID     string `json:"key_id" binding:"required"`
 	Encrypted string `json:"encrypted_data" binding:"required"`
-	Signature string `json:"signature" binding:"required"`
+	Signature string `json:"signature"`  // 签名验证暂未实现，可选
 	Timestamp int64  `json:"timestamp" binding:"required"`
 	Nonce     string `json:"nonce" binding:"required"`
 }
