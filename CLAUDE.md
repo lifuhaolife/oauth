@@ -22,6 +22,16 @@ go run .
 # 编译
 go build -o auth-service .
 
+# 运行所有测试
+go test -v ./...
+
+# 运行测试并生成覆盖率报告
+go test -v -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+
+# 竞态检测
+go test -race -v ./...
+
 # Docker 部署
 docker-compose up -d
 docker-compose logs -f auth-service
@@ -31,6 +41,13 @@ docker-compose down
 docker-compose up -d mysql
 # 或手动执行
 mysql -u root -p < scripts/init.sql
+
+# 使用 Makefile
+make build         # 编译
+make test          # 运行测试
+make run           # 运行服务
+make docker-up     # Docker 启动
+make init-db       # 初始化数据库
 ```
 
 ## 架构结构

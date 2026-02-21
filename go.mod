@@ -13,3 +13,5 @@ require (
 	gorm.io/driver/mysql v1.5.2
 	gorm.io/gorm v1.25.5
 )
+
+require golang.org/x/text v0.14.0 // indirect
