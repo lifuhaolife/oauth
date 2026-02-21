@@ -18,12 +18,12 @@ help: ## 显示帮助信息
 
 build: ## 编译构建
 	@echo "Building $(BINARY_NAME)..."
-	$(GO) build -o $(BINARY_NAME) .
+	$(GO) build -o $(BINARY_NAME) ./cmd/server
 	@echo "Build complete!"
 
 run: ## 运行服务
 	@echo "Starting auth service..."
-	$(GO) run .
+	$(GO) run ./cmd/server
 
 test: ## 运行所有测试
 	@echo "Running tests..."

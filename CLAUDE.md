@@ -17,10 +17,10 @@ Go + Gin 鉴权管理后端服务，核心特性：
 go mod download
 
 # 运行服务（需要先配置 .env 和 MySQL）
-go run .
+go run cmd/server/main.go
 
 # 编译
-go build -o auth-service .
+go build -o auth-service cmd/server/main.go
 
 # 运行所有测试
 go test -v ./...
@@ -53,16 +53,23 @@ make init-db       # 初始化数据库
 ## 架构结构
 
 ```
-main.go (入口)
+cmd/server/main.go (入口)
     │
     ├── internal/config      # 配置加载、MASTER_KEY 管理、JWT 密钥对生成
     ├── internal/keystore    # RSA 密钥池管理（内存缓存、自动维护）
     ├── internal/crypto      # 加密原语（RSA/AES/BCrypt/HMAC）
+    │   ├── crypto.go
+    │   └── crypto_test.go
     ├── internal/model       # GORM 模型 + 数据传输结构
-    ├── internal/handler     # HTTP Handler（auth_handler, admin_handler）
+    │   └── model.go
+    ├── internal/handler     # HTTP Handler
+    │   ├── auth_handler.go  # 认证相关
+    │   └── admin_handler.go # 管理相关
     ├── internal/middleware  # 中间件（CORS/RateLimit/Auth/Admin）
     ├── internal/service     # 业务逻辑（AuthService）
-    └── pkg/jwt              # JWT 服务（签发/验证/黑名单）
+    └── internal/jwt         # JWT 服务（签发/验证/黑名单）
+        ├── jwt.go
+        └── jwt_test.go
 ```
 
 ## 核心流程
@@ -103,3 +110,7 @@ WECHAT_APP_ID=  # 可选，留空禁用微信登录
 - **微信登录**: 在 `internal/service/auth_service.go` 的 `WechatLogin` 方法中实现
 - **新增接口**: `internal/handler/auth_handler.go` 添加 Handler，`main.go` 注册路由
 - **自定义中间件**: `internal/middleware/middleware.go`
+
+
+## 注意事项
+本项目面向中文开发者，所有文档描述使用中文

@@ -5,7 +5,7 @@ import (
 	"auth-service/internal/keystore"
 	"auth-service/internal/model"
 	"auth-service/internal/service"
-	"auth-service/pkg/jwt"
+	"auth-service/internal/jwt"
 	"encoding/base64"
 	"encoding/json"
 	"errors"

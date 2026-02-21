@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cd D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth:*)"
+      "Bash(cd D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(cp:*)",
+      "Bash(find D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth:*)",
+      "Bash(find D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth\\\\pkg:*)"
     ]
   }
 }

@@ -4,7 +4,7 @@ import (
 	"auth-service/internal/crypto"
 	"auth-service/internal/keystore"
 	"auth-service/internal/model"
-	"auth-service/pkg/jwt"
+	"auth-service/internal/jwt"
 	"errors"
 	"time"
 )
