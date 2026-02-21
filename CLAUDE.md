@@ -32,15 +32,20 @@ go tool cover -html=coverage.out -o coverage.html
 # 竞态检测
 go test -race -v ./...
 
-# Docker 部署
+# Docker 部署 (使用独立 MySQL)
+docker-compose -f docker-compose.standalone.yml up -d
+docker logs -f auth_service
+docker-compose -f docker-compose.standalone.yml down
+
+# 或使用包含 MySQL 的 docker-compose (开发环境)
 docker-compose up -d
 docker-compose logs -f auth-service
 docker-compose down
 
-# 初始化数据库
+# 初始化数据库 (如果使用 docker-compose.yml 中的 MySQL)
 docker-compose up -d mysql
 # 或手动执行
-mysql -u root -p < scripts/init.sql
+mysql -h localhost -P 3306 -u root -p < scripts/init.sql
 
 # 使用 Makefile
 make build         # 编译

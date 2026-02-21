@@ -58,18 +58,29 @@ docker-build: ## 构建 Docker 镜像
 	@echo "Building Docker image..."
 	$(DOCKER) build -t auth-service:latest .
 
-docker-up: ## 启动 Docker 服务
-	@echo "Starting Docker services..."
+docker-up: ## 启动 Docker 服务 (使用独立 MySQL)
+	@echo "Starting Docker services (standalone mode)..."
+	$(DOCKER_COMPOSE) -f docker-compose.standalone.yml up -d
+
+docker-up-dev: ## 启动 Docker 服务 (包含 MySQL，开发模式)
+	@echo "Starting Docker services (with MySQL)..."
 	$(DOCKER_COMPOSE) up -d
 
-docker-down: ## 停止 Docker 服务
-	@echo "Stopping Docker services..."
+docker-down: ## 停止 Docker 服务 (使用独立 MySQL)
+	@echo "Stopping Docker services (standalone mode)..."
+	$(DOCKER_COMPOSE) -f docker-compose.standalone.yml down
+
+docker-down-dev: ## 停止 Docker 服务 (包含 MySQL，开发模式)
+	@echo "Stopping Docker services (with MySQL)..."
 	$(DOCKER_COMPOSE) down
 
 docker-logs: ## 查看 Docker 日志
+	$(DOCKER_COMPOSE) -f docker-compose.standalone.yml logs -f auth-service
+
+docker-logs-dev: ## 查看 Docker 日志 (开发模式)
 	$(DOCKER_COMPOSE) logs -f auth-service
 
-init-db: ## 初始化数据库
+init-db: ## 初始化数据库 (如果使用 docker-compose.yml 中的 MySQL)
 	@echo "Initializing database..."
 	$(DOCKER_COMPOSE) up -d mysql
 	@echo "Waiting for MySQL to be ready..."

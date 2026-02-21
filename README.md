@@ -47,6 +47,7 @@ auth-service/
 ├── REFACTOR_PLAN.md        # 重构计划
 ├── Dockerfile
 ├── docker-compose.yml
+├── docker-compose.standalone.yml  # 独立部署配置
 ├── Makefile
 ├── go.mod
 ├── go.sum
@@ -77,13 +78,51 @@ make run
 make test
 ```
 
-## 构建
+## Docker 部署
+
+项目支持两种 Docker 部署方式：
+
+### 1. 使用独立 MySQL (推荐)
+如果您已经有独立部署的 MySQL 数据库：
 
 ```bash
-# 构建二进制文件
-make build
-# 或
-go build -o bin/auth-service cmd/server/main.go
+# 构建镜像
+docker build -t auth-service .
+
+# 运行容器 (请替换环境变量)
+docker run -d \
+  --name auth-service \
+  -p 8080:8080 \
+  -e DB_HOST=your_mysql_host \
+  -e DB_PORT=3306 \
+  -e DB_USER=root \
+  -e DB_PASSWORD=your_password \
+  -e DB_NAME=auth_service \
+  -e MASTER_KEY=your_master_key \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/keys:/app/keys \
+  auth-service
+```
+
+或者使用 docker-compose.standalone.yml：
+
+```bash
+# 使用独立 MySQL 部署
+docker-compose -f docker-compose.standalone.yml up -d
+```
+
+### 2. 使用 docker-compose (包含 MySQL)
+如果需要同时部署 MySQL 和服务：
+
+```bash
+# 启动服务和 MySQL
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f auth-service
+
+# 停止服务
+docker-compose down
 ```
 
 ## API 文档
