@@ -6,7 +6,9 @@
       "Bash(git push:*)",
       "Bash(cp:*)",
       "Bash(find D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth:*)",
-      "Bash(find D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth\\\\pkg:*)"
+      "Bash(find D:\\\\Users\\\\lenovo\\\\ClaudeCodes\\\\oauth\\\\pkg:*)",
+      "Bash(where go:*)",
+      "Bash(git add:*)"
     ]
   }
 }
