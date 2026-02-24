@@ -56,7 +56,7 @@ type User struct {
 	ID             int64     `gorm:"primaryKey" json:"id"`
 	Username       string    `gorm:"size:50;uniqueIndex;not null" json:"username"`
 	PasswordHash   string    `gorm:"size:255;not null" json:"-"`
-	PhoneEncrypted []byte    `gorm:"size:255;not null" json:"-"` // AES 加密存储
+	PhoneEncrypted []byte    `gorm:"size:255" json:"-"` // AES 加密存储，无手机号时为 NULL
 	Phone          string    `gorm:"-" json:"phone,omitempty"`   // 解密后的手机号 (仅返回时用)
 	WechatOpenID   string    `gorm:"size:64;uniqueIndex" json:"-"`
 	WechatUnionID  string    `gorm:"size:64" json:"-"`
@@ -161,20 +161,6 @@ func (KeyStoreRecord) TableName() string {
 
 // ============ 数据传输结构 ============
 
-// Response 统一响应结构
-type Response struct {
-	Code    int         `json:"code"`              // 业务状态码：200-成功，其他-失败
-	Message string      `json:"message,omitempty"` // 提示信息
-	Data    interface{} `json:"data,omitempty"`    // 响应数据
-}
-
-// ErrorResponse 错误响应
-type ErrorResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Error   string `json:"error,omitempty"` // 详细错误信息（开发环境）
-}
-
 // LoginRequest 登录请求
 type LoginRequest struct {
 	KeyID     string `json:"key_id" binding:"required"`
@@ -211,7 +197,7 @@ type RefreshTokenRequest struct {
 
 // LogoutRequest 登出请求
 type LogoutRequest struct {
-	AccessToken string `json:"access_token"`
+	AccessToken string `json:"access_token" binding:"required"`
 }
 
 // WechatLoginRequest 微信登录请求
@@ -245,4 +231,12 @@ type JWK struct {
 	Alg string `json:"alg"`
 	N   string `json:"n"`
 	E   string `json:"e"`
+}
+
+// CreateUserPayload RSA 解密后的创建用户 payload（仅内部使用）
+type CreateUserPayload struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Phone    string `json:"phone"`
+	Nickname string `json:"nickname"`
 }

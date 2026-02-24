@@ -114,35 +114,50 @@ func (ks *KeyStore) initRSAPool(size int) error {
 	return nil
 }
 
-// generateRSAKey 生成单个 RSA 密钥对
+// generateRSAKey 生成单个 RSA 密钥对（自行加锁，不可在已持有锁时调用）
 func (ks *KeyStore) generateRSAKey() error {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return fmt.Errorf("生成 RSA 密钥失败：%v", err)
-	}
-
-	// 生成 key_id (公钥指纹)
-	pubKeyBytes, err := crypto.PublicKeyToPEM(&privateKey.PublicKey)
+	entry, err := buildRSAKeyEntry()
 	if err != nil {
 		return err
+	}
+	ks.mu.Lock()
+	ks.rsaKeyPool[entry.KeyID] = entry
+	ks.mu.Unlock()
+	return nil
+}
+
+// generateRSAKeyLocked 生成单个 RSA 密钥对并写入池（调用方必须已持有 ks.mu 写锁）
+func (ks *KeyStore) generateRSAKeyLocked() error {
+	entry, err := buildRSAKeyEntry()
+	if err != nil {
+		return err
+	}
+	ks.rsaKeyPool[entry.KeyID] = entry
+	return nil
+}
+
+// buildRSAKeyEntry 生成 RSA 密钥对并构建条目（无锁，可并发调用）
+func buildRSAKeyEntry() (*RSAPubKeyEntry, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("生成 RSA 密钥失败：%v", err)
+	}
+
+	pubKeyBytes, err := crypto.PublicKeyToPEM(&privateKey.PublicKey)
+	if err != nil {
+		return nil, err
 	}
 	fingerprint := sha256.Sum256(pubKeyBytes)
 	keyID := hex.EncodeToString(fingerprint[:])[:32]
 
-	entry := &RSAPubKeyEntry{
+	return &RSAPubKeyEntry{
 		KeyID:      keyID,
 		PrivateKey: privateKey,
 		PublicKey:  &privateKey.PublicKey,
 		CreatedAt:  time.Now(),
 		IsUsed:     false,
-		ExpiredAt:  time.Now().Add(10 * time.Minute), // 10 分钟过期
-	}
-
-	ks.mu.Lock()
-	ks.rsaKeyPool[keyID] = entry
-	ks.mu.Unlock()
-
-	return nil
+		ExpiredAt:  time.Now().Add(10 * time.Minute),
+	}, nil
 }
 
 // GetRSAPublicKey 获取 RSA 公钥 (返回未使用的密钥)
@@ -162,8 +177,8 @@ func (ks *KeyStore) GetRSAPublicKey() (string, string, error) {
 		}
 	}
 
-	// 没有可用密钥，生成新的
-	if err := ks.generateRSAKey(); err != nil {
+	// 没有可用密钥，生成新的（已持有锁，使用 Locked 变体）
+	if err := ks.generateRSAKeyLocked(); err != nil {
 		return "", "", err
 	}
 
@@ -233,9 +248,9 @@ func (ks *KeyStore) maintainKeyPool() {
 			}
 		}
 
-		// 补充密钥池 (保持至少 10 个可用密钥)
+		// 补充密钥池（保持至少 10 个可用密钥，已持有锁，使用 Locked 变体）
 		for activeCount < 10 {
-			if err := ks.generateRSAKey(); err != nil {
+			if err := ks.generateRSAKeyLocked(); err != nil {
 				fmt.Printf("补充 RSA 密钥失败：%v\n", err)
 			} else {
 				activeCount++

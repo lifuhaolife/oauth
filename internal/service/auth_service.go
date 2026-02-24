@@ -2,11 +2,14 @@ package service
 
 import (
 	"auth-service/internal/crypto"
+	"auth-service/internal/jwt"
 	"auth-service/internal/keystore"
 	"auth-service/internal/model"
-	"auth-service/internal/jwt"
 	"errors"
+	"fmt"
+	"regexp"
 	"time"
+	"unicode"
 )
 
 // AuthService 认证服务
@@ -19,9 +22,18 @@ var authService *AuthService
 
 // InitServices 初始化所有服务
 func InitServices() {
+	jwtSvc := jwt.NewJWTService()
 	authService = &AuthService{
 		keyStore: keystore.GetKeyStore(),
-		jwtSvc:   jwt.NewJWTService(),
+		jwtSvc:   jwtSvc,
+	}
+
+	// 从数据库加载未过期的黑名单，确保重启后已登出 token 继续无效
+	if err := jwtSvc.LoadBlacklistFromDB(); err != nil {
+		// 非致命错误，仅记录警告
+		fmt.Printf("[WARN] 加载 token 黑名单失败: %v\n", err)
+	} else {
+		fmt.Println("[INFO] Token 黑名单已从数据库加载")
 	}
 }
 
@@ -102,7 +114,7 @@ func (s *AuthService) RefreshToken(refreshToken string) (*model.LoginResponse, e
 	}
 
 	// 获取用户 ID
-	userID := int64(claims["sub"].(float64))
+	userID := claims["sub"].(int64)
 
 	// 查询用户
 	var user model.User
@@ -162,6 +174,11 @@ func (s *AuthService) ChangePassword(userID int64, oldPassword, newPassword stri
 		return errors.New("原密码错误")
 	}
 
+	// 新密码强度校验
+	if err := validatePasswordStrength(newPassword); err != nil {
+		return err
+	}
+
 	// 更新密码
 	hashedPassword, err := hashPassword(newPassword)
 	if err != nil {
@@ -187,4 +204,90 @@ func hashPassword(password string) (string, error) {
 // checkPassword 验证密码
 func checkPassword(password, hash string) bool {
 	return crypto.CheckPasswordHash(password, hash)
+}
+
+// ErrUsernameAlreadyExists 用户名已存在哨兵错误
+var ErrUsernameAlreadyExists = errors.New("用户名已存在")
+
+// validateUsername 校验用户名格式（4-20 位，仅字母/数字/下划线）
+func validateUsername(username string) error {
+	if len(username) < 4 || len(username) > 20 {
+		return fmt.Errorf("用户名长度必须在 4-20 位之间")
+	}
+	matched, _ := regexp.MatchString(`^[a-zA-Z0-9_]+$`, username)
+	if !matched {
+		return fmt.Errorf("用户名只能包含字母、数字和下划线")
+	}
+	return nil
+}
+
+// validatePasswordStrength 校验密码强度（8+ 位，含大小写字母和数字）
+func validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("密码至少需要 8 位")
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasDigit {
+		return fmt.Errorf("密码必须包含大写字母、小写字母和数字")
+	}
+	return nil
+}
+
+// CreateUser 创建新用户（管理员操作）
+func (s *AuthService) CreateUser(username, password, phone, nickname string) (*model.User, error) {
+	// 1. 用户名格式校验
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
+
+	// 2. 检查用户名唯一性
+	var count int64
+	model.GetDB().Model(&model.User{}).Where("username = ?", username).Count(&count)
+	if count > 0 {
+		return nil, ErrUsernameAlreadyExists
+	}
+
+	// 3. 密码强度校验
+	if err := validatePasswordStrength(password); err != nil {
+		return nil, err
+	}
+
+	// 4. BCrypt 哈希密码
+	hashedPassword, err := hashPassword(password)
+	if err != nil {
+		return nil, fmt.Errorf("密码加密失败")
+	}
+
+	// 5. 构建用户记录
+	user := model.User{
+		Username:     username,
+		PasswordHash: hashedPassword,
+		Nickname:     nickname,
+		Status:       1,
+		Role:         "user",
+	}
+
+	// 6. 若有手机号，AES 加密存储
+	if phone != "" {
+		if err := user.EncryptPhone(phone, s.keyStore.GetAESKey()); err != nil {
+			return nil, fmt.Errorf("手机号加密失败")
+		}
+	}
+
+	// 7. 创建用户记录
+	if err := model.GetDB().Create(&user).Error; err != nil {
+		return nil, fmt.Errorf("创建用户失败")
+	}
+
+	return &user, nil
 }

@@ -1,6 +1,7 @@
 # Makefile for Auth Service
 
-.PHONY: help build test clean run docker-build docker-up docker-down lint
+.PHONY: help build test clean run docker-build docker-up docker-down lint \
+        generate-keys generate-master-key health-check dev
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -87,10 +88,29 @@ init-db: ## 初始化数据库 (如果使用 docker-compose.yml 中的 MySQL)
 	@sleep 5
 	@echo "Database initialized!"
 
-generate-key: ## 生成 MASTER_KEY
+generate-key: ## 生成 MASTER_KEY（同 generate-master-key）
 	@echo "Generating MASTER_KEY..."
 	@openssl rand -base64 32
 	@echo "Add this to your .env file as MASTER_KEY"
+
+generate-keys: ## 生成 JWT RSA 密钥对（私钥+公钥）
+	@echo "Generating JWT RSA key pair..."
+	@mkdir -p cmd/server/keys
+	@openssl genrsa -out cmd/server/keys/jwt_private_tmp.pem 2048 2>/dev/null
+	@openssl pkcs8 -topk8 -nocrypt -in cmd/server/keys/jwt_private_tmp.pem \
+	         -out cmd/server/keys/jwt_private.pem 2>/dev/null
+	@openssl rsa -in cmd/server/keys/jwt_private_tmp.pem -pubout \
+	         -out cmd/server/keys/jwt_public.pem 2>/dev/null
+	@rm -f cmd/server/keys/jwt_private_tmp.pem
+	@chmod 600 cmd/server/keys/jwt_private.pem
+	@echo "JWT keys generated: cmd/server/keys/jwt_private.pem, cmd/server/keys/jwt_public.pem"
+
+generate-master-key: ## 生成 MASTER_KEY（AES-256，Base64 编码）
+	@printf "MASTER_KEY=%s\n" "$$(openssl rand -base64 32)"
+
+health-check: ## 检查服务健康状态
+	@curl -sf "http://localhost:$${SERVER_PORT:-8080}/health" | python3 -m json.tool 2>/dev/null \
+	  || curl -sf "http://localhost:$${SERVER_PORT:-8080}/health"
 
 mod-tidy: ## 整理依赖
 	@echo "Running go mod tidy..."
@@ -105,9 +125,8 @@ vendor: ## 创建 vendor 目录
 	$(GO) mod vendor
 
 # 开发相关
-dev: ## 开发模式运行 (使用 air 热加载)
-	@echo "Starting development mode..."
-	air || $(GO) run .
+dev: ## 本地开发启动（含环境检查，热加载优先使用 air）
+	@bash scripts/dev.sh
 
 # 生产构建
 prod-build: ## 生产环境编译

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -58,7 +59,7 @@ func (s *JWTService) GenerateToken(user *model.User) (accessToken, refreshToken 
 	// Access Token
 	accessClaims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   string(rune(user.ID)),
+			Subject:   strconv.FormatInt(user.ID, 10),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessExpire)),
 			Issuer:    "auth-service",
@@ -79,7 +80,7 @@ func (s *JWTService) GenerateToken(user *model.User) (accessToken, refreshToken 
 	// Refresh Token
 	refreshClaims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   string(rune(user.ID)),
+			Subject:   strconv.FormatInt(user.ID, 10),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.refreshExpire)),
 			Issuer:    "auth-service",
@@ -117,13 +118,23 @@ func (s *JWTService) ValidateToken(tokenString string) (map[string]interface{}, 
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		// 检查是否在黑名单中
+		// 检查 token hash 黑名单（当次登出记录）
 		if s.IsInBlacklist(tokenString) {
 			return nil, errors.New("Token 已失效")
 		}
+		// 检查 jti 黑名单（重启后从 DB 加载的记录）
+		if s.isJtiInBlacklist(claims.ID) {
+			return nil, errors.New("Token 已失效")
+		}
+
+		// 将 subject 解析为 int64（subject 存储的是用户 ID 的十进制字符串）
+		userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("无效的 Token subject: %v", err)
+		}
 
 		return map[string]interface{}{
-			"sub":      claims.Subject,
+			"sub":      userID, // int64
 			"jti":      claims.ID,
 			"type":     claims.Type,
 			"device":   claims.Device,
@@ -204,16 +215,19 @@ func (s *JWTService) hashToken(token string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// saveToDatabase 保存到数据库
+// saveToDatabase 保存到数据库（异步，DB 未初始化时静默跳过）
 func (s *JWTService) saveToDatabase(jti string, expiredAt time.Time) {
-	// 异步保存
 	go func() {
+		db := model.GetDB()
+		if db == nil {
+			return
+		}
 		record := model.TokenBlacklist{
 			Jti:       jti,
 			ExpiredAt: expiredAt,
 			CreatedAt: time.Now(),
 		}
-		model.GetDB().Create(&record)
+		db.Create(&record)
 	}()
 }
 
@@ -230,6 +244,52 @@ func (s *JWTService) CleanBlacklist() {
 	}
 }
 
+// LoadBlacklistFromDB 从数据库加载未过期的黑名单记录到内存
+// 服务重启后调用此函数，确保已登出的 token 重启后仍然无效。
+// 注意：黑名单存储的是 jti，不是完整 token，因此这里使用 jti 直接存入内存 map。
+func (s *JWTService) LoadBlacklistFromDB() error {
+	db := model.GetDB()
+	if db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+
+	var records []model.TokenBlacklist
+	if err := db.Where("expired_at > ?", time.Now()).Find(&records).Error; err != nil {
+		return fmt.Errorf("加载黑名单失败: %v", err)
+	}
+
+	blacklistLock.Lock()
+	defer blacklistLock.Unlock()
+
+	loaded := 0
+	for _, r := range records {
+		// 以 jti 作为 key 存入内存黑名单（与 IsInBlacklist 的 token hash 路径不同）
+		// 为保持一致性，直接使用 jti 存储
+		blacklist[r.Jti] = r.ExpiredAt
+		loaded++
+	}
+
+	return nil
+}
+
+// isJtiInBlacklist 检查 jti 是否在黑名单中（供内部使用）
+func (s *JWTService) isJtiInBlacklist(jti string) bool {
+	blacklistLock.RLock()
+	exp, exists := blacklist[jti]
+	blacklistLock.RUnlock()
+
+	if !exists {
+		return false
+	}
+	if time.Now().After(exp) {
+		blacklistLock.Lock()
+		delete(blacklist, jti)
+		blacklistLock.Unlock()
+		return false
+	}
+	return true
+}
+
 // 启动定期清理
 func init() {
 	go func() {
@@ -239,15 +299,17 @@ func init() {
 			// 清理内存黑名单
 			blacklistLock.Lock()
 			now := time.Now()
-			for hash, exp := range blacklist {
+			for key, exp := range blacklist {
 				if now.After(exp) {
-					delete(blacklist, hash)
+					delete(blacklist, key)
 				}
 			}
 			blacklistLock.Unlock()
 
 			// 清理数据库黑名单
-			model.GetDB().Where("expired_at < ?", now).Delete(&model.TokenBlacklist{})
+			if db := model.GetDB(); db != nil {
+				db.Where("expired_at < ?", now).Delete(&model.TokenBlacklist{})
+			}
 		}
 	}()
 }
