@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"auth-service/internal/crypto"
 	"auth-service/internal/keystore"
 	"auth-service/internal/model"
-	"net/http"
+	"auth-service/internal/service"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,15 +41,11 @@ func ListUsers(c *gin.Context) {
 		users[i].Phone = users[i].GetMaskedPhone(keyStore.GetAESKey())
 	}
 
-	c.JSON(http.StatusOK, model.Response{
-		Code:    200,
-		Message: "获取成功",
-		Data: gin.H{
-			"users":     users,
-			"total":     total,
-			"page":      page,
-			"page_size": pageSize,
-		},
+	model.OK(c, gin.H{
+		"users":     users,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -56,44 +57,27 @@ func UpdateUserStatus(c *gin.Context) {
 		Status int `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, model.ErrorResponse{
-			Code:    400,
-			Message: "请求参数错误",
-			Error:   err.Error(),
-		})
+		model.Fail(c, model.ErrParamInvalid)
 		return
 	}
 
 	if req.Status != 0 && req.Status != 1 {
-		c.JSON(http.StatusBadRequest, model.ErrorResponse{
-			Code:    400,
-			Message: "状态值必须为 0 或 1",
-		})
+		model.FailMsg(c, model.ErrParamInvalid, "状态值必须为 0 或 1")
 		return
 	}
 
 	result := model.GetDB().Model(&model.User{}).Where("id = ?", userID).Update("status", req.Status)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, model.ErrorResponse{
-			Code:    500,
-			Message: "更新失败",
-			Error:   result.Error.Error(),
-		})
+		model.Fail(c, model.ErrDBError)
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, model.ErrorResponse{
-			Code:    404,
-			Message: "用户不存在",
-		})
+		model.Fail(c, model.ErrNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, model.Response{
-		Code:    200,
-		Message: "更新成功",
-	})
+	model.OKEmpty(c)
 }
 
 // GetLoginLogs 获取登录日志 (管理员)
@@ -127,15 +111,11 @@ func GetLoginLogs(c *gin.Context) {
 	query.Count(&total)
 	query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&logs)
 
-	c.JSON(http.StatusOK, model.Response{
-		Code:    200,
-		Message: "获取成功",
-		Data: gin.H{
-			"logs":      logs,
-			"total":     total,
-			"page":      page,
-			"page_size": pageSize,
-		},
+	model.OK(c, gin.H{
+		"logs":      logs,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -144,9 +124,71 @@ func GetKeyStats(c *gin.Context) {
 	keyStore := keystore.GetKeyStore()
 	stats := keyStore.GetKeyStats()
 
-	c.JSON(http.StatusOK, model.Response{
-		Code:    200,
-		Message: "获取成功",
-		Data:    stats,
+	model.OK(c, stats)
+}
+
+// CreateUser 创建新用户 (管理员)
+func CreateUser(c *gin.Context) {
+	var req model.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Fail(c, model.ErrParamInvalid)
+		return
+	}
+
+	// 验证时间戳防重放（5 分钟窗口）
+	now := time.Now().Unix()
+	if now-req.Timestamp > 300 {
+		model.Fail(c, model.ErrRequestExpired)
+		return
+	}
+
+	// 获取 RSA 私钥
+	keyStore := keystore.GetKeyStore()
+	privateKey, err := keyStore.GetRSAPrivateKey(req.KeyID)
+	if err != nil {
+		model.Fail(c, model.ErrKeyInvalid)
+		return
+	}
+
+	// Base64 解码加密数据
+	encryptedData, err := base64.StdEncoding.DecodeString(req.Encrypted)
+	if err != nil {
+		model.Fail(c, model.ErrDataFormat)
+		return
+	}
+
+	// RSA 解密
+	decryptedData, err := crypto.RSADecrypt(privateKey, encryptedData)
+	if err != nil {
+		model.Fail(c, model.ErrDecryptFail)
+		return
+	}
+
+	// 使用后销毁密钥
+	go keyStore.InvalidateKey(req.KeyID)
+
+	// 解析创建用户 payload
+	var payload model.CreateUserPayload
+	if err := json.Unmarshal(decryptedData, &payload); err != nil {
+		model.Fail(c, model.ErrDataFormat)
+		return
+	}
+
+	// 调用创建用户服务（包含 role 参数，支持创建管理员）
+	authService := service.GetAuthService()
+	user, err := authService.CreateUser(payload.Username, payload.Password, payload.Phone, payload.Nickname, payload.Role)
+	if err != nil {
+		if errors.Is(err, service.ErrUsernameAlreadyExists) {
+			model.Fail(c, model.ErrUsernameExists)
+			return
+		}
+		model.FailMsg(c, model.ErrParamInvalid, err.Error())
+		return
+	}
+
+	model.OK(c, gin.H{
+		"id":         user.ID,
+		"username":   user.Username,
+		"created_at": user.CreatedAt,
 	})
 }

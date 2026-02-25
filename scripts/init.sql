@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(50) NOT NULL COMMENT '用户名',
     password_hash VARCHAR(255) NOT NULL COMMENT 'BCrypt 密码哈希',
-    phone_encrypted VARBINARY(255) NOT NULL COMMENT 'AES 加密的手机号',
+    phone_encrypted VARBINARY(255) NULL COMMENT 'AES 加密的手机号，无手机号时为 NULL',
     wechat_openid VARCHAR(64) DEFAULT NULL COMMENT '微信 OpenID',
     wechat_unionid VARCHAR(64) DEFAULT NULL COMMENT '微信 UnionID',
     avatar VARCHAR(255) DEFAULT '' COMMENT '头像 URL',
@@ -73,5 +73,5 @@ CREATE TABLE IF NOT EXISTS key_store_record (
 -- 默认账号：admin / Admin@123
 -- 实际使用时请生成正确的 BCrypt 哈希
 INSERT INTO users (username, password_hash, phone_encrypted, role, status)
-VALUES ('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 0x00, 'admin', 1)
+VALUES ('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', NULL, 'admin', 1)
 ON DUPLICATE KEY UPDATE username=username;

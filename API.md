@@ -478,12 +478,17 @@ POST /api/v1/admin/users/create
   "username": "newuser",
   "password": "NewPass@123",
   "phone": "13800138000",
-  "nickname": "新用户"
+  "nickname": "新用户",
+  "role": "user"
 }
 ```
 
-**密码强度要求**：至少 8 位，包含大写字母、小写字母和数字。
-**用户名规则**：4-20 位，仅限字母、数字和下划线。
+**参数说明**：
+- `username`（必填）：用户名，4-20 位，仅限字母、数字和下划线
+- `password`（必填）：密码，至少 8 位，包含大写字母、小写字母和数字
+- `phone`（可选）：手机号，支持 AES-GCM 加密存储
+- `nickname`（可选）：用户昵称
+- `role`（可选）：用户角色，可选值 `"user"`（普通用户，默认） 或 `"admin"`（管理员）
 
 **成功响应**：
 ```json
@@ -503,6 +508,7 @@ POST /api/v1/admin/users/create
 { "code": 30011, "msg": "用户名已存在" }
 { "code": 10001, "msg": "用户名长度必须在 4-20 位之间" }
 { "code": 10001, "msg": "密码必须包含大写字母、小写字母和数字" }
+{ "code": 10001, "msg": "角色值无效，仅允许 'user' 或 'admin'" }
 ```
 
 ---

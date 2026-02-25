@@ -51,6 +51,16 @@ func AutoMigrate() error {
 	)
 }
 
+// ==================== User Role Constants ====================
+
+// User role constants
+const (
+	RoleUser  = "user"  // 普通用户
+	RoleAdmin = "admin" // 管理员
+)
+
+// ==================== User Model ====================
+
 // User 用户表
 type User struct {
 	ID             int64     `gorm:"primaryKey" json:"id"`
@@ -239,4 +249,5 @@ type CreateUserPayload struct {
 	Password string `json:"password"`
 	Phone    string `json:"phone"`
 	Nickname string `json:"nickname"`
+	Role     string `json:"role"` // 可选：用户角色，默认为 "user"，可指定 "admin"
 }

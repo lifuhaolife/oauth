@@ -244,7 +244,7 @@ func validatePasswordStrength(password string) error {
 }
 
 // CreateUser 创建新用户（管理员操作）
-func (s *AuthService) CreateUser(username, password, phone, nickname string) (*model.User, error) {
+func (s *AuthService) CreateUser(username, password, phone, nickname, role string) (*model.User, error) {
 	// 1. 用户名格式校验
 	if err := validateUsername(username); err != nil {
 		return nil, err
@@ -262,29 +262,37 @@ func (s *AuthService) CreateUser(username, password, phone, nickname string) (*m
 		return nil, err
 	}
 
-	// 4. BCrypt 哈希密码
+	// 4. 角色合法性校验（仅允许 "user" 或 "admin"，不传默认为 "user"）
+	if role == "" {
+		role = model.RoleUser
+	}
+	if role != model.RoleUser && role != model.RoleAdmin {
+		return nil, fmt.Errorf("角色值无效，仅允许 '%s' 或 '%s'", model.RoleUser, model.RoleAdmin)
+	}
+
+	// 5. BCrypt 哈希密码
 	hashedPassword, err := hashPassword(password)
 	if err != nil {
 		return nil, fmt.Errorf("密码加密失败")
 	}
 
-	// 5. 构建用户记录
+	// 6. 构建用户记录（使用传入的 role，而非硬编码）
 	user := model.User{
 		Username:     username,
 		PasswordHash: hashedPassword,
 		Nickname:     nickname,
 		Status:       1,
-		Role:         "user",
+		Role:         role,
 	}
 
-	// 6. 若有手机号，AES 加密存储
+	// 7. 若有手机号，AES 加密存储
 	if phone != "" {
 		if err := user.EncryptPhone(phone, s.keyStore.GetAESKey()); err != nil {
 			return nil, fmt.Errorf("手机号加密失败")
 		}
 	}
 
-	// 7. 创建用户记录
+	// 8. 创建用户记录
 	if err := model.GetDB().Create(&user).Error; err != nil {
 		return nil, fmt.Errorf("创建用户失败")
 	}
