@@ -136,6 +136,18 @@
                 <button class="btn btn-primary" onclick="getLoginLogs()">登录日志</button>
                 <div id="logsResponse" class="response hidden"></div>
             </div>
+
+            <div class="form-group">
+                <label>创建用户</label>
+                <p style="font-size:12px;color:#888;margin-bottom:8px;">先点「获取公钥」再填写信息并创建（使用 RSA 加密传输）</p>
+                <button class="btn btn-primary" onclick="getPublicKey()" style="margin-bottom:8px;">获取公钥</button>
+                <input type="text" id="newUsername" placeholder="用户名（4-20位，字母/数字/下划线）" style="margin-bottom:6px;">
+                <input type="password" id="newUserPassword" placeholder="密码（8+位，含大小写字母和数字）" style="margin-bottom:6px;margin-top:6px;">
+                <input type="text" id="newUserPhone" placeholder="手机号（选填）" style="margin-bottom:6px;margin-top:6px;">
+                <input type="text" id="newUserNickname" placeholder="昵称（选填）" style="margin-bottom:6px;margin-top:6px;">
+                <button class="btn btn-success" onclick="createUser()" style="margin-top:6px;">创建用户</button>
+                <div id="createUserResponse" class="response hidden"></div>
+            </div>
         </div>
 
         <!-- 原始API测试 -->
@@ -181,12 +193,56 @@
         let currentPublicKey = null;
         let currentKeyId = null;
 
-        // 更新token显示
+        // ===== Token 校验工具 =====
+
+        // 解析 JWT Payload（不做签名验证，仅用于客户端展示/过期判断）
+        function decodeJWTPayload(token) {
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) return null;
+                // base64url → base64 → JSON
+                const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                const json = atob(base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '='));
+                return JSON.parse(json);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 检查 token 是否已过期（提前 10 秒判定为过期，避免临界误差）
+        function isTokenExpired(token) {
+            if (!token) return true;
+            const payload = decodeJWTPayload(token);
+            if (!payload || !payload.exp) return true;
+            return Date.now() / 1000 >= payload.exp - 10;
+        }
+
+        // 获取带 Authorization 头的 headers，若 token 无效则返回 null 并提示
+        function getAuthHeaders(silent = false) {
+            if (!accessToken) {
+                if (!silent) alert('未登录，请先完成登录步骤');
+                return null;
+            }
+            if (isTokenExpired(accessToken)) {
+                if (!silent) alert('Access Token 已过期，请刷新 Token 或重新登录');
+                return null;
+            }
+            return { 'Authorization': `Bearer ${accessToken}` };
+        }
+
+        // 更新 token 显示，附带过期状态
         function updateTokenDisplay() {
             if (accessToken) {
                 document.getElementById('tokenInfo').classList.remove('hidden');
-                document.getElementById('accessTokenPreview').textContent = accessToken.substring(0, 50) + '...';
-                document.getElementById('refreshTokenPreview').textContent = refreshTokenValue.substring(0, 50) + '...';
+                const payload = decodeJWTPayload(accessToken);
+                const expired = isTokenExpired(accessToken);
+                const expireText = payload && payload.exp
+                    ? `（过期时间: ${new Date(payload.exp * 1000).toLocaleTimeString()}${expired ? ' ⚠️已过期' : ' ✓有效'}）`
+                    : '';
+                document.getElementById('accessTokenPreview').textContent =
+                    accessToken.substring(0, 50) + '...' + expireText;
+                document.getElementById('refreshTokenPreview').textContent =
+                    refreshTokenValue.substring(0, 50) + '...';
             } else {
                 document.getElementById('tokenInfo').classList.add('hidden');
             }
@@ -218,8 +274,10 @@
             try {
                 const response = await fetch(`${API_BASE}/health`);
                 const data = await response.json();
-                document.getElementById('healthStatus').innerHTML = '<span class="status status-ok">在线</span>';
-                showResponse('healthResponse', data);
+                const ok = data.code === 0;
+                document.getElementById('healthStatus').innerHTML =
+                    ok ? '<span class="status status-ok">在线</span>' : '<span class="status status-error">异常</span>';
+                showResponse('healthResponse', data, !ok);
             } catch (error) {
                 document.getElementById('healthStatus').innerHTML = '<span class="status status-error">离线</span>';
                 showResponse('healthResponse', '错误: ' + error.message, true);
@@ -232,24 +290,21 @@
                 const response = await fetch(`${API_BASE}/api/v1/auth/pubkey`);
                 const data = await response.json();
                 
-                // 适配统一响应格式
-                if (data.code !== 200) {
-                    throw new Error(data.message || '获取公钥失败');
+                // 适配统一响应格式 (code=0 为成功)
+                if (data.code !== 0) {
+                    throw new Error(data.msg || '获取公钥失败');
                 }
                 
                 const pubkeyData = data.data;
                 currentKeyId = pubkeyData.key_id;
-                
-                // Base64解码 (先清理可能的空格和换行符)
+
+                // Base64解码公钥PEM
                 const cleanBase64 = pubkeyData.public_key.replace(/\s/g, '');
                 currentPublicKey = atob(cleanBase64);
-                
-                showResponse('pubkeyResponse', {
-                    key_id: pubkeyData.key_id,
-                    public_key: currentPublicKey.substring(0, 100) + '...'
-                });
+
+                // 展示完整统一响应
+                showResponse('pubkeyResponse', data);
                 console.log('公钥已获取:', currentKeyId);
-                console.log('公钥内容:', currentPublicKey);
             } catch (error) {
                 console.error('获取公钥失败:', error);
                 showResponse('pubkeyResponse', '错误: ' + error.message, true);
@@ -296,7 +351,7 @@
                 const data = await response.json();
                 console.log('服务器响应:', data);
 
-                if (response.ok && data.code === 200) {
+                if (response.ok && data.code === 0) {
                     // 统一响应格式：data.data 包含实际数据
                     const loginData = data.data;
                     accessToken = loginData.access_token;
@@ -321,16 +376,12 @@
 
         // 获取当前用户
         async function getCurrentUser() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             try {
-                const response = await fetch(`${API_BASE}/api/v1/user/me`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
+                const response = await fetch(`${API_BASE}/api/v1/user/me`, { headers });
                 const data = await response.json();
-                showResponse('userResponse', data, data.code !== 200);
+                showResponse('userResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('userResponse', '错误: ' + error.message, true);
             }
@@ -339,7 +390,11 @@
         // 刷新Token
         async function refreshToken() {
             if (!refreshTokenValue) {
-                alert('没有refresh token');
+                alert('没有 Refresh Token，请重新登录');
+                return;
+            }
+            if (isTokenExpired(refreshTokenValue)) {
+                alert('Refresh Token 已过期，请重新登录');
                 return;
             }
             try {
@@ -349,7 +404,7 @@
                     body: JSON.stringify({ refresh_token: refreshTokenValue })
                 });
                 const data = await response.json();
-                if (data.code === 200) {
+                if (data.code === 0) {
                     const tokenData = data.data;
                     accessToken = tokenData.access_token;
                     refreshTokenValue = tokenData.refresh_token;
@@ -357,7 +412,7 @@
                     localStorage.setItem('refreshToken', refreshTokenValue);
                     updateTokenDisplay();
                 }
-                showResponse('refreshResponse', data, data.code !== 200);
+                showResponse('refreshResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('refreshResponse', '错误: ' + error.message, true);
             }
@@ -365,27 +420,18 @@
 
         // 修改密码
         async function changePassword() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             const oldPassword = document.getElementById('oldPassword').value;
             const newPassword = document.getElementById('newPassword').value;
-
             try {
                 const response = await fetch(`${API_BASE}/api/v1/user/password`, {
                     method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${accessToken}`
-                    },
-                    body: JSON.stringify({
-                        old_password: oldPassword,
-                        new_password: newPassword
-                    })
+                    headers: { 'Content-Type': 'application/json', ...headers },
+                    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
                 });
                 const data = await response.json();
-                showResponse('passwordResponse', data, data.code !== 200);
+                showResponse('passwordResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('passwordResponse', '错误: ' + error.message, true);
             }
@@ -393,28 +439,23 @@
 
         // 登出
         async function logout() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             try {
                 const response = await fetch(`${API_BASE}/api/v1/auth/logout`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${accessToken}`
-                    },
+                    headers: { 'Content-Type': 'application/json', ...headers },
                     body: JSON.stringify({ access_token: accessToken })
                 });
                 const data = await response.json();
-                if (data.code === 200) {
+                if (data.code === 0) {
                     accessToken = '';
                     refreshTokenValue = '';
                     localStorage.removeItem('accessToken');
                     localStorage.removeItem('refreshToken');
                     updateTokenDisplay();
                 }
-                showResponse('logoutResponse', data, data.code !== 200);
+                showResponse('logoutResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('logoutResponse', '错误: ' + error.message, true);
             }
@@ -422,16 +463,12 @@
 
         // 获取用户列表
         async function listUsers() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/users`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
+                const response = await fetch(`${API_BASE}/api/v1/admin/users`, { headers });
                 const data = await response.json();
-                showResponse('usersResponse', data, !response.ok);
+                showResponse('usersResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('usersResponse', '错误: ' + error.message, true);
             }
@@ -439,16 +476,12 @@
 
         // 获取密钥统计
         async function getKeyStats() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/keys/stats`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
+                const response = await fetch(`${API_BASE}/api/v1/admin/keys/stats`, { headers });
                 const data = await response.json();
-                showResponse('keyStatsResponse', data, !response.ok);
+                showResponse('keyStatsResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('keyStatsResponse', '错误: ' + error.message, true);
             }
@@ -456,18 +489,65 @@
 
         // 获取登录日志
         async function getLoginLogs() {
-            if (!accessToken) {
-                alert('请先登录');
-                return;
-            }
+            const headers = getAuthHeaders();
+            if (!headers) return;
             try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/login-logs`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
+                const response = await fetch(`${API_BASE}/api/v1/admin/login-logs`, { headers });
                 const data = await response.json();
-                showResponse('logsResponse', data, !response.ok);
+                showResponse('logsResponse', data, data.code !== 0);
             } catch (error) {
                 showResponse('logsResponse', '错误: ' + error.message, true);
+            }
+        }
+
+        // 创建用户（管理员）
+        async function createUser() {
+            const headers = getAuthHeaders();
+            if (!headers) return;
+
+            if (!currentPublicKey || !currentKeyId) {
+                alert('请先点击「获取公钥」按钮');
+                return;
+            }
+
+            const username = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('newUserPassword').value;
+            const phone = document.getElementById('newUserPhone').value.trim();
+            const nickname = document.getElementById('newUserNickname').value.trim();
+
+            if (!username || !password) {
+                alert('用户名和密码为必填项');
+                return;
+            }
+
+            // RSA 加密 payload
+            const encrypt = new JSEncrypt();
+            encrypt.setPublicKey(currentPublicKey);
+            const payload = JSON.stringify({ username, password, phone, nickname });
+            const encrypted = encrypt.encrypt(payload);
+            if (!encrypted) {
+                alert('加密失败，请重新获取公钥');
+                return;
+            }
+
+            const nonce = Math.random().toString(36).substring(2, 15);
+            const requestData = {
+                key_id: currentKeyId,
+                encrypted_data: encrypted,
+                timestamp: Math.floor(Date.now() / 1000),
+                nonce: nonce
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/users/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...headers },
+                    body: JSON.stringify(requestData)
+                });
+                const data = await response.json();
+                showResponse('createUserResponse', data, data.code !== 0);
+            } catch (error) {
+                showResponse('createUserResponse', '错误: ' + error.message, true);
             }
         }
 
@@ -483,8 +563,10 @@
                 headers: {}
             };
 
-            if (useAuth && accessToken) {
-                options.headers['Authorization'] = `Bearer ${accessToken}`;
+            if (useAuth) {
+                const authHeaders = getAuthHeaders();
+                if (!authHeaders) return;
+                options.headers['Authorization'] = authHeaders['Authorization'];
             }
 
             if (body && (method === 'POST' || method === 'PUT')) {

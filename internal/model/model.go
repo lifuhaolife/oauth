@@ -28,10 +28,8 @@ func InitDB(cfg *config.Config) error {
 		return fmt.Errorf("连接数据库失败：%v", err)
 	}
 
-	// 自动迁移表结构
-	if err := AutoMigrate(); err != nil {
-		return fmt.Errorf("数据库迁移失败：%v", err)
-	}
+	// 注意：不在这里调用 AutoMigrate，改为在 main.go 中通过 migrate.RunMigrations 使用版本化 SQL 迁移
+	// 这样可以避免 GORM AutoMigrate 和手动 SQL 迁移的冲突
 
 	return nil
 }

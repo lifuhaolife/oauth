@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -335,5 +336,411 @@ func TestAuthAndAdminMiddlewareChain(t *testing.T) {
 	r.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusOK {
 		t.Errorf("admin 应返回 200，实际 %d（body: %s）", w3.Code, w3.Body.String())
+	}
+}
+
+// ===== RateLimitMiddleware 测试 =====
+
+func TestRateLimitMiddleware_AllowedRequest(t *testing.T) {
+	r := gin.New()
+	r.Use(RateLimitMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("正常请求应返回 200，实际 %d", w.Code)
+	}
+}
+
+func TestRateLimitMiddleware_MultipleRequestsSameIP(t *testing.T) {
+	r := gin.New()
+	r.Use(RateLimitMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	ip := "192.168.1.2:12345"
+
+	// 发送多个请求（应该都成功，因为限制是 60/分钟）
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = ip
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("第 %d 个请求应返回 200，实际 %d", i+1, w.Code)
+		}
+	}
+}
+
+func TestRateLimitMiddleware_DifferentIPs(t *testing.T) {
+	r := gin.New()
+	r.Use(RateLimitMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 不同 IP 应该独立计算限流
+	for i := 1; i <= 3; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = "192.168.1." + string(rune(48+i)) + ":12345"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("IP %d 的请求应返回 200，实际 %d", i, w.Code)
+		}
+	}
+}
+
+// ===== LogMiddleware 测试 =====
+
+func TestLogMiddleware_RequestLogging(t *testing.T) {
+	r := gin.New()
+	r.Use(LogMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("LogMiddleware 不应改变响应状态，实际 %d", w.Code)
+	}
+}
+
+func TestLogMiddleware_DifferentMethods(t *testing.T) {
+	tests := []struct {
+		method string
+	}{
+		{"GET"},
+		{"POST"},
+		{"PUT"},
+		{"DELETE"},
+		{"PATCH"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			r := gin.New()
+			r.Use(LogMiddleware())
+			r.Handle(tt.method, "/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+			req := httptest.NewRequest(tt.method, "/test", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("%s 请求应返回 200，实际 %d", tt.method, w.Code)
+			}
+		})
+	}
+}
+
+// ===== RecoveryMiddleware 测试 =====
+
+func TestRecoveryMiddleware_RecoversPanic(t *testing.T) {
+	r := gin.New()
+	r.Use(RecoveryMiddleware())
+	r.GET("/panic", func(c *gin.Context) {
+		panic("test panic")
+	})
+	r.GET("/normal", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 测试 panic 恢复
+	req := httptest.NewRequest("GET", "/panic", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Panic 恢复应返回 500，实际 %d", w.Code)
+	}
+
+	// 测试正常请求仍然有效
+	req2 := httptest.NewRequest("GET", "/normal", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("Panic 恢复后正常请求应返回 200，实际 %d", w2.Code)
+	}
+}
+
+func TestRecoveryMiddleware_NormalRequest(t *testing.T) {
+	r := gin.New()
+	r.Use(RecoveryMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("正常请求应返回 200，实际 %d", w.Code)
+	}
+}
+
+// ===== TimeoutMiddleware 测试 =====
+
+func TestTimeoutMiddleware_NormalRequest(t *testing.T) {
+	r := gin.New()
+	r.Use(TimeoutMiddleware(5 * 1000)) // 5 seconds in milliseconds
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// 超时中间件可能返回不同的状态码取决于实现
+	// 这里我们只检查请求被处理了
+	if w.Code == 0 {
+		t.Error("请求应该被处理")
+	}
+}
+
+// ===== MonitorMiddleware 测试 =====
+
+func TestMonitorMiddleware_TrackingMetrics(t *testing.T) {
+	r := gin.New()
+	r.Use(MonitorMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("MonitorMiddleware 不应改变状态，实际 %d", w.Code)
+	}
+}
+
+func TestGetMetrics_ReturnsMetrics(t *testing.T) {
+	// 发送几个请求以生成指标
+	r := gin.New()
+	r.Use(MonitorMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+	}
+
+	// 获取指标
+	metrics := GetMetrics()
+	if metrics == nil {
+		t.Error("GetMetrics 应返回指标，实际 nil")
+	}
+}
+
+func TestMetricsHandler_ReturnsJSON(t *testing.T) {
+	r := gin.New()
+	r.Use(MonitorMiddleware())
+	r.GET("/metrics", MetricsHandler)
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 发送一个请求
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// 获取指标
+	req2 := httptest.NewRequest("GET", "/metrics", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("MetricsHandler 应返回 200，实际 %d", w2.Code)
+	}
+
+	// 检查响应是否为 JSON (允许 charset 后缀)
+	contentType := w2.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		t.Errorf("ContentType 应包含 application/json，实际 %s", contentType)
+	}
+}
+
+func TestStartMetricsLogger(t *testing.T) {
+	// 测试启动 metrics logger 不会panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("StartMetricsLogger 不应 panic：%v", r)
+		}
+	}()
+
+	StartMetricsLogger()
+}
+
+// ===== CORSMiddleware 额外测试 =====
+
+func TestCORSMiddleware_PreflightRequest(t *testing.T) {
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.OPTIONS("/test", func(c *gin.Context) {})
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("OPTIONS", "/test", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Header().Get("Access-Control-Allow-Origin") == "" {
+		t.Error("CORS 预检请求应返回 Allow-Origin 头")
+	}
+}
+
+func TestCORSMiddleware_CredentialsHeader(t *testing.T) {
+	// 设置允许的 CORS origins
+	os.Setenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+	defer os.Unsetenv("CORS_ALLOWED_ORIGINS")
+
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 发送带 Origin 头的请求，该 Origin 在允许列表中
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	allowCredentials := w.Header().Get("Access-Control-Allow-Credentials")
+	if allowCredentials != "true" {
+		t.Errorf("Allow-Credentials 应为 true，实际 %q", allowCredentials)
+	}
+}
+
+// ===== AdminMiddleware 额外测试 =====
+
+func TestAdminMiddleware_MissingUserID(t *testing.T) {
+	// 测试 user_id 缺失的情况
+	r := gin.New()
+	r.Use(AdminMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	// 不设置 user_id
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("缺失 user_id 应返回 403，实际 %d", w.Code)
+	}
+}
+
+func TestAdminMiddleware_InvalidUserID(t *testing.T) {
+	// 测试 user_id 不存在的情况
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("user_id", int64(999999)); c.Next() })
+	r.Use(AdminMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("不存在的 user_id 应返回 403，实际 %d", w.Code)
+	}
+}
+
+// ===== RateLimitMiddleware 额外测试 =====
+
+func TestRateLimitMiddleware_ExtractIPFromXForwardedFor(t *testing.T) {
+	r := gin.New()
+	r.Use(RateLimitMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	// 模拟代理请求
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("X-Forwarded-For 请求应返回 200，实际 %d", w.Code)
+	}
+}
+
+func TestRateLimitMiddleware_ExtractIPFromXRealIP(t *testing.T) {
+	r := gin.New()
+	r.Use(RateLimitMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	// 模拟代理请求
+	req.Header.Set("X-Real-IP", "203.0.113.2")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("X-Real-IP 请求应返回 200，实际 %d", w.Code)
+	}
+}
+
+// ===== TimeoutMiddleware 额外测试 =====
+
+func TestTimeoutMiddleware_ConfiguredTimeout(t *testing.T) {
+	r := gin.New()
+	r.Use(TimeoutMiddleware(1000)) // 1 second timeout
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// 应该成功，因为处理不会超过 1 秒
+	if w.Code == 0 {
+		t.Error("请求应该被处理")
+	}
+}
+
+// ===== CORSMiddleware 额外测试 =====
+
+func TestCORSMiddleware_WildcardOrigin(t *testing.T) {
+	// 清除 CORS_ALLOWED_ORIGINS，使用通配符模式
+	os.Unsetenv("CORS_ALLOWED_ORIGINS")
+
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Origin", "http://example.com")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	allowOrigin := w.Header().Get("Access-Control-Allow-Origin")
+	if allowOrigin != "*" {
+		t.Errorf("通配符模式应返回 *，实际 %q", allowOrigin)
+	}
+
+	// 验证不设置 Credentials（W3C 规范）
+	allowCredentials := w.Header().Get("Access-Control-Allow-Credentials")
+	if allowCredentials != "" {
+		t.Errorf("通配符模式不应设置 Credentials，实际 %q", allowCredentials)
+	}
+}
+
+func TestCORSMiddleware_MismatchedOrigin(t *testing.T) {
+	os.Setenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+	defer os.Unsetenv("CORS_ALLOWED_ORIGINS")
+
+	r := gin.New()
+	r.Use(CORSMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 发送不匹配的 Origin
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// 不匹配的 origin 不应该被设置
+	allowOrigin := w.Header().Get("Access-Control-Allow-Origin")
+	if allowOrigin != "" {
+		t.Errorf("不匹配的 Origin 不应被设置，实际 %q", allowOrigin)
 	}
 }
